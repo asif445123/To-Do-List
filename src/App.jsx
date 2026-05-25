@@ -3,6 +3,8 @@ import { useState, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { FaEdit } from "react-icons/fa";
 import { AiFillDelete } from "react-icons/ai";
+import Swal from "sweetalert2";
+import "sweetalert2/dist/sweetalert2.min.css";
 
 function App() {
   const [todo, setTodo] = useState("");
@@ -155,18 +157,47 @@ function App() {
   };
 
   // ========== CHECKBOX ==========
-  const handleCheckbox = (e) => {
+  const handleCheckbox = async (e) => {
     const id = e.target.name;
     const index = todos.findIndex((item) => item.id === id);
     const newTodos = [...todos];
     newTodos[index].isCompleted = !newTodos[index].isCompleted;
 
     if (newTodos[index].isCompleted) {
-      const realAmount = prompt("اصل قیمت لکھیں (Enter Real Total Amount):");
-      if (realAmount !== null && realAmount !== "") {
-        const r = parseFloat(realAmount);
+      const result = await Swal.fire({
+        // title: "اصل قیمت لکھیں",
+        text: "اصل قیمت لکھیں",
+        input: "number",
+        // inputLabel: "اصل قیمت",
+        inputPlaceholder: "اصل قیمت درج کریں",
+        inputAttributes: {
+          min: 0,
+          step: 0.01,
+        },
+        showCancelButton: true,
+        confirmButtonText: "محفوظ کریں",
+        cancelButtonText: "منسوخ کریں",
+        inputValidator: (value) => {
+          if (!value) return "براہ کرم اصل قیمت درج کریں۔";
+          if (isNaN(value) || parseFloat(value) < 0)
+            return "صحیح قیمت درج کریں۔";
+          return null;
+        },
+      });
+
+      if (!result.isConfirmed) {
+        newTodos[index].isCompleted = false;
+      } else {
+        const r = parseFloat(result.value);
         newTodos[index].realAmount = r;
         newTodos[index].difference = newTodos[index].estimatedAmount - r;
+        await Swal.fire({
+          icon: "success",
+          title: "اصل قیمت محفوظ ہو گئی",
+          text: `اصل قیمت Rs.${r.toFixed(2)} محفوظ ہو گئی۔`,
+          timer: 1500,
+          showConfirmButton: false,
+        });
       }
     } else {
       newTodos[index].realAmount = null;
