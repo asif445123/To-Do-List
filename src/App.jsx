@@ -307,58 +307,121 @@ function App() {
   };
 
   // ========== ✅ SHARE DATE AS IMAGE ==========
- // ✅ Download helper
-const downloadBlob = (blob, fileName) => {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
-
-// ✅ Main Share Function
-const handleDownloadDateImage = async (dateKey) => {
+ const handleDownloadDateImage = async (dateKey) => {
   try {
-    const containerId = `date-${dateKey.replace(/[^a-zA-Z0-9]/g, "_")}`;
-    const el = document.getElementById(containerId);
-
-    if (!el) {
-      Swal.fire({ icon: "error", title: "خرابی", text: "Element نہیں ملا" });
+    const items = groupedTodos[dateKey] || [];
+    if (items.length === 0) {
+      Swal.fire({ icon: "warning", title: "کوئی سامان نہیں" });
       return;
     }
 
-    // ✅ بٹن چھپائیں
-    const buttons = el.querySelectorAll("button");
-    buttons.forEach((btn) => (btn.style.display = "none"));
+    const dateEst = items.reduce((acc, t) => acc + (t.estimatedAmount || 0), 0);
+    const dateReal = items.reduce((acc, t) => acc + (t.realAmount || 0), 0);
+    const dateDiff = items.reduce((acc, t) => acc + (t.difference || 0), 0);
+    const completed = items.filter((t) => t.isCompleted).length;
+
+    // ✅ سامان کی rows
+    const itemRows = items
+      .map((item, idx) => {
+        const bgColor = idx % 2 === 0 ? '#ffffff' : '#f9f5ff';
+        const status = item.isCompleted ? '✅' : '⬜';
+        const lineStyle = item.isCompleted ? 'text-decoration:line-through;color:#9ca3af;' : '';
+        
+        return `
+          <tr style="background:${bgColor};">
+            <td style="padding:10px;border-bottom:1px solid #e9d5ff;text-align:center;font-size:14px;">${status}</td>
+            <td style="padding:10px;border-bottom:1px solid #e9d5ff;text-align:right;font-size:14px;${lineStyle}">
+              <strong>${item.todo}</strong>
+              <span style="color:#6b7280;font-size:12px;"> (${formatQuantity(item.quantity)})</span>
+            </td>
+            <td style="padding:10px;border-bottom:1px solid #e9d5ff;text-align:center;font-size:13px;color:#7c3aed;font-weight:bold;">
+              Rs.${item.estimatedAmount?.toFixed() ?? '-'}
+            </td>
+            <td style="padding:10px;border-bottom:1px solid #e9d5ff;text-align:center;font-size:13px;color:#2563eb;">
+              ${item.realAmount ? `Rs.${item.realAmount.toFixed()}` : '-'}
+            </td>
+            <td style="padding:10px;border-bottom:1px solid #e9d5ff;text-align:center;font-size:13px;font-weight:bold;color:${item.difference >= 0 ? '#16a34a' : '#dc2626'};">
+              ${item.difference !== null ? `Rs.${item.difference.toFixed()}` : '-'}
+            </td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    // ✅ پورا HTML template
+    const htmlContent = `
+      <div style="width:780px;padding:20px;background:#f5f3ff;font-family:Arial,sans-serif;direction:rtl;">
+        <div style="background:#7c3aed;color:white;padding:20px;border-radius:10px 10px 0 0;text-align:center;">
+          <h1 style="margin:0;font-size:26px;">🛒 بازار کا سامان</h1>
+          <p style="margin:8px 0 0;font-size:18px;">📅 ${formatDate(dateKey)}</p>
+          <p style="margin:5px 0 0;font-size:13px;opacity:0.9;">کل ${items.length} اشیاء | ${completed} مکمل</p>
+        </div>
+        
+        <table style="width:100%;border-collapse:collapse;background:white;">
+          <thead>
+            <tr style="background:#6d28d9;color:white;">
+              <th style="padding:12px;text-align:center;font-size:13px;">حالت</th>
+              <th style="padding:12px;text-align:right;font-size:13px;">سامان</th>
+              <th style="padding:12px;text-align:center;font-size:13px;">اندازہ</th>
+              <th style="padding:12px;text-align:center;font-size:13px;">اصل</th>
+              <th style="padding:12px;text-align:center;font-size:13px;">فرق</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itemRows}
+          </tbody>
+        </table>
+
+        <div style="background:#5b21b6;color:white;padding:18px;border-radius:0 0 10px 10px;">
+          <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:bold;">
+            <span>💰 اندازہ: Rs.${dateEst.toFixed()}</span>
+            <span>💵 اصل: Rs.${dateReal.toFixed()}</span>
+            <span style="color:${dateDiff >= 0 ? '#86efac' : '#fca5a5'};">
+              ${dateDiff >= 0 ? '✅' : '⚠️'} فرق: Rs.${dateDiff.toFixed()}
+            </span>
+          </div>
+        </div>
+
+        <p style="text-align:center;margin-top:15px;color:#6b7280;font-size:11px;">
+          📱 بازار لسٹ ایپ
+        </p>
+      </div>
+    `;
+
+    // ✅ Container بنائیں - screen سے باہر
+    const container = document.createElement('div');
+    container.innerHTML = htmlContent;
+    container.style.position = 'fixed';
+    container.style.top = '-9999px';
+    container.style.left = '-9999px';
+    container.style.width = '780px';
+    document.body.appendChild(container);
 
     let canvas;
     try {
-      canvas = await html2canvas(el, {
+      canvas = await html2canvas(container, {
         scale: 2,
         useCORS: true,
-        backgroundColor: "#ffffff",
+        backgroundColor: '#ffffff',
         logging: false,
       });
     } finally {
-      // ✅ بٹن واپس
-      buttons.forEach((btn) => (btn.style.display = ""));
+      document.body.removeChild(container);
     }
 
-    // ✅ Blob بنائیں
+    // ✅ Blob
     const blob = await new Promise((resolve, reject) => {
       canvas.toBlob(
         (b) => (b ? resolve(b) : reject(new Error("Blob failed"))),
-        "image/png"
+        "image/png",
+        1.0
       );
     });
 
     const fileName = `bazaar-${dateKey}.png`;
     const file = new File([blob], fileName, { type: "image/png" });
 
-    // ✅ موبائل شیئر
+    // ✅ شیئر
     if (navigator.share) {
       try {
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -370,7 +433,6 @@ const handleDownloadDateImage = async (dateKey) => {
       }
     }
 
-    // ✅ Download
     downloadBlob(blob, fileName);
     Swal.fire({
       icon: "success",
