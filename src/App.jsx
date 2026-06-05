@@ -6,6 +6,7 @@ import { AiFillDelete } from "react-icons/ai";
 import Swal from "sweetalert2";
 import "sweetalert2/dist/sweetalert2.min.css";
 import html2canvas from "html2canvas";
+import { domToPng } from 'modern-screenshot';
 
 function App() {
   const [todo, setTodo] = useState("");
@@ -306,24 +307,7 @@ function App() {
   };
 
   // ========== ✅ SHARE DATE AS IMAGE ==========
-  // ✅ oklch کو RGB میں تبدیل کرنے کا helper
-const rgbFallback = (colorStr) => {
-  try {
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = 1;
-    tempCanvas.height = 1;
-    const ctx = tempCanvas.getContext("2d");
-    ctx.fillStyle = colorStr;
-    ctx.fillRect(0, 0, 1, 1);
-    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
-    if (a === 0) return null;
-    return `rgb(${r}, ${g}, ${b})`;
-  } catch {
-    return null;
-  }
-};
-
-// ✅ Download helper
+ // ✅ Download helper
 const downloadBlob = (blob, fileName) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -335,60 +319,20 @@ const downloadBlob = (blob, fileName) => {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 };
 
-// ✅ Main share function
+// ✅ Main Share Function
 const handleDownloadDateImage = async (dateKey) => {
   try {
     const containerId = `date-${dateKey.replace(/[^a-zA-Z0-9]/g, "_")}`;
     const el = document.getElementById(containerId);
 
     if (!el) {
-      Swal.fire({
-        icon: "error",
-        title: "خرابی",
-        text: "Element not found: " + containerId,
-      });
+      Swal.fire({ icon: "error", title: "خرابی", text: "Element نہیں ملا" });
       return;
     }
 
+    // ✅ بٹن چھپائیں
     const buttons = el.querySelectorAll("button");
-    buttons.forEach((btn) => (btn.style.visibility = "hidden"));
-
-    const allElements = el.querySelectorAll("*");
-    const originalStyles = [];
-
-    allElements.forEach((element) => {
-      const computed = window.getComputedStyle(element);
-      const fixes = {};
-
-      if (computed.backgroundColor && computed.backgroundColor.includes("oklch")) {
-        fixes.backgroundColor = element.style.backgroundColor;
-        element.style.backgroundColor = rgbFallback(computed.backgroundColor) || "#ffffff";
-      }
-      if (computed.color && computed.color.includes("oklch")) {
-        fixes.color = element.style.color;
-        element.style.color = rgbFallback(computed.color) || "#000000";
-      }
-      if (computed.borderColor && computed.borderColor.includes("oklch")) {
-        fixes.borderColor = element.style.borderColor;
-        element.style.borderColor = rgbFallback(computed.borderColor) || "#cccccc";
-      }
-      if (computed.boxShadow && computed.boxShadow.includes("oklch")) {
-        fixes.boxShadow = element.style.boxShadow;
-        element.style.boxShadow = "none";
-      }
-      if (computed.outlineColor && computed.outlineColor.includes("oklch")) {
-        fixes.outlineColor = element.style.outlineColor;
-        element.style.outlineColor = "transparent";
-      }
-
-      originalStyles.push({ element, fixes });
-    });
-
-    const elOriginalBg = el.style.backgroundColor;
-    const elComputed = window.getComputedStyle(el);
-    if (elComputed.backgroundColor && elComputed.backgroundColor.includes("oklch")) {
-      el.style.backgroundColor = "#ffffff";
-    }
+    buttons.forEach((btn) => (btn.style.display = "none"));
 
     let canvas;
     try {
@@ -396,70 +340,50 @@ const handleDownloadDateImage = async (dateKey) => {
         scale: 2,
         useCORS: true,
         backgroundColor: "#ffffff",
-        allowTaint: true,
         logging: false,
       });
     } finally {
-      buttons.forEach((btn) => (btn.style.visibility = "visible"));
-      originalStyles.forEach(({ element, fixes }) => {
-        if (fixes.backgroundColor !== undefined) element.style.backgroundColor = fixes.backgroundColor;
-        if (fixes.color !== undefined) element.style.color = fixes.color;
-        if (fixes.borderColor !== undefined) element.style.borderColor = fixes.borderColor;
-        if (fixes.boxShadow !== undefined) element.style.boxShadow = fixes.boxShadow;
-        if (fixes.outlineColor !== undefined) element.style.outlineColor = fixes.outlineColor;
-      });
-      el.style.backgroundColor = elOriginalBg;
+      // ✅ بٹن واپس
+      buttons.forEach((btn) => (btn.style.display = ""));
     }
 
+    // ✅ Blob بنائیں
     const blob = await new Promise((resolve, reject) => {
-      canvas.toBlob((b) => {
-        if (b) resolve(b);
-        else reject(new Error("Blob creation failed"));
-      }, "image/png");
+      canvas.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("Blob failed"))),
+        "image/png"
+      );
     });
 
     const fileName = `bazaar-${dateKey}.png`;
     const file = new File([blob], fileName, { type: "image/png" });
 
-    // ✅ صرف تصویر شیئر
-    if (navigator.share && navigator.canShare({ files: [file] })) {
+    // ✅ موبائل شیئر
+    if (navigator.share) {
       try {
-        await navigator.share({
-          files: [file],
-        });
-        return;
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file] });
+          return;
+        }
       } catch (err) {
         if (err.name === "AbortError") return;
-        console.warn("Native share failed:", err.message);
       }
     }
 
+    // ✅ Download
     downloadBlob(blob, fileName);
     Swal.fire({
       icon: "success",
       title: "تصویر ڈاؤن لوڈ ہو گئی",
-      text: "اسے WhatsApp میں کھول کر بھیجیں۔",
       timer: 2000,
       showConfirmButton: false,
     });
 
   } catch (err) {
-    console.error("Share error:", err);
-    Swal.fire({
-      icon: "error",
-      title: "خرابی پیش آئی",
-      html: `
-        <div style="text-align: right; direction: rtl;">
-          <p style="color: #e74c3c; font-weight: bold;">${err.message}</p>
-          <p style="color: #7f8c8d; font-size: 13px;">براہ مہربانی دوبارہ کوشش کریں۔</p>
-        </div>
-      `,
-      confirmButtonText: "ٹھیک ہے",
-      confirmButtonColor: "#7c3aed",
-    });
+    console.error("Error:", err);
+    Swal.fire({ icon: "error", title: "خرابی", text: err.message });
   }
 };
-
   // ========== SHARE TEXT ONLY ==========
   const handleShareDateText = (dateKey) => {
     const message = buildShareMessage(dateKey);
