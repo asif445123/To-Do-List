@@ -5,6 +5,7 @@ import { FaEdit } from "react-icons/fa";
 import { AiFillDelete } from "react-icons/ai";
 import Swal from "sweetalert2";
 import "sweetalert2/dist/sweetalert2.min.css";
+import html2canvas from "html2canvas";
 
 function App() {
   const [todo, setTodo] = useState("");
@@ -31,6 +32,10 @@ function App() {
 
     const historyString = localStorage.getItem("priceHistory");
     if (historyString) setPriceHistory(JSON.parse(historyString));
+
+    // ✅ آج کی تاریخ خود بخود
+    const today = new Date().toISOString().split("T")[0];
+    setDate(today);
   }, []);
 
   const SaveToLS = (newTodos) => {
@@ -41,8 +46,7 @@ function App() {
     localStorage.setItem("priceHistory", JSON.stringify(history));
   };
 
-  // ========== BUILD PRICE HISTORY FROM TODOS ==========
-  // priceHistory = { "itemName": [ { date, estimatedRate, realAmount, quantity }, ... ] }
+  // ========== BUILD PRICE HISTORY ==========
   const buildPriceHistory = (allTodos) => {
     const history = {};
     allTodos.forEach((t) => {
@@ -63,14 +67,13 @@ function App() {
         });
       }
     });
-    // Sort each item's history by date descending
     Object.keys(history).forEach((k) => {
       history[k].sort((a, b) => new Date(b.date) - new Date(a.date));
     });
     return history;
   };
 
-  // ========== HANDLE TODO INPUT WITH AUTOCOMPLETE ==========
+  // ========== HANDLE TODO INPUT ==========
   const handleChange = (e) => {
     const val = e.target.value;
     setTodo(val);
@@ -89,17 +92,16 @@ function App() {
     }
   };
 
-  // ========== SELECT SUGGESTION → AUTO FILL LATEST PRICE ==========
+  // ========== SUGGESTION SELECT ==========
   const handleSelectSuggestion = (name) => {
     setTodo(name);
     setShowSuggestions(false);
     setSuggestions([]);
 
-    // Find latest entry for this item
     const history = buildPriceHistory(todos);
     const key = name.toLowerCase().trim();
     if (history[key] && history[key].length > 0) {
-      const latest = history[key][0]; // Already sorted desc
+      const latest = history[key][0];
       setEstimated(String(latest.estimatedRate));
       setQuantity(String(latest.quantity));
       setAutoFilledPrice(true);
@@ -144,7 +146,6 @@ function App() {
     setTodos(newTodos);
     SaveToLS(newTodos);
 
-    // Update price history
     const newHistory = buildPriceHistory(newTodos);
     setPriceHistory(newHistory);
     SavePriceHistory(newHistory);
@@ -153,7 +154,6 @@ function App() {
     setQuantity("");
     setEstimated("");
     setAutoFilledPrice(false);
-    // Keep date for multiple entries
   };
 
   // ========== CHECKBOX ==========
@@ -165,15 +165,10 @@ function App() {
 
     if (newTodos[index].isCompleted) {
       const result = await Swal.fire({
-        // title: "اصل قیمت لکھیں",
         text: "اصل قیمت لکھیں",
         input: "number",
-        // inputLabel: "اصل قیمت",
         inputPlaceholder: "اصل قیمت درج کریں",
-        inputAttributes: {
-          min: 0,
-          step: 0.01,
-        },
+        inputAttributes: { min: 0, step: 0.01 },
         showCancelButton: true,
         confirmButtonText: "محفوظ کریں",
         cancelButtonText: "منسوخ کریں",
@@ -261,8 +256,7 @@ function App() {
       }, {});
   };
 
-  // ========== PRICE COMPARISON DATA ==========
-  // For each unique item name, get all entries across dates
+  // ========== PRICE COMPARISON ==========
   const getPriceComparisonData = () => {
     const history = buildPriceHistory(todos);
     return Object.keys(history)
@@ -292,12 +286,192 @@ function App() {
   const groupedTodos = groupByDate(todos);
   const priceComparisonData = getPriceComparisonData();
 
+  // ========== BUILD SHARE MESSAGE ==========
+  const buildShareMessage = (dateKey) => {
+    const items = groupedTodos[dateKey] || [];
+    const dateEst = items.reduce((acc, t) => acc + (t.estimatedAmount || 0), 0);
+    const dateReal = items.reduce((acc, t) => acc + (t.realAmount || 0), 0);
+    const dateDiff = items.reduce((acc, t) => acc + (t.difference || 0), 0);
+
+    const lines = items.map(
+      (i) =>
+        `${i.todo} (${formatQuantity(i.quantity)}) - Rs.${(
+          i.estimatedAmount || 0
+        ).toFixed()}`
+    );
+
+    return `📅 ${formatDate(dateKey)}\n\n${lines.join(
+      "\n"
+    )}\n\nاندازہ: Rs.${dateEst.toFixed()}\nاصل: Rs.${dateReal.toFixed()}\nفرق: Rs.${dateDiff.toFixed()}`;
+  };
+
+  // ========== ✅ SHARE DATE AS IMAGE ==========
+  // ✅ oklch کو RGB میں تبدیل کرنے کا helper
+const rgbFallback = (colorStr) => {
+  try {
+    const tempCanvas = document.createElement("canvas");
+    tempCanvas.width = 1;
+    tempCanvas.height = 1;
+    const ctx = tempCanvas.getContext("2d");
+    ctx.fillStyle = colorStr;
+    ctx.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+    if (a === 0) return null;
+    return `rgb(${r}, ${g}, ${b})`;
+  } catch {
+    return null;
+  }
+};
+
+// ✅ Download helper
+const downloadBlob = (blob, fileName) => {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
+// ✅ Main share function
+const handleDownloadDateImage = async (dateKey) => {
+  try {
+    const containerId = `date-${dateKey.replace(/[^a-zA-Z0-9]/g, "_")}`;
+    const el = document.getElementById(containerId);
+
+    if (!el) {
+      Swal.fire({
+        icon: "error",
+        title: "خرابی",
+        text: "Element not found: " + containerId,
+      });
+      return;
+    }
+
+    const buttons = el.querySelectorAll("button");
+    buttons.forEach((btn) => (btn.style.visibility = "hidden"));
+
+    const allElements = el.querySelectorAll("*");
+    const originalStyles = [];
+
+    allElements.forEach((element) => {
+      const computed = window.getComputedStyle(element);
+      const fixes = {};
+
+      if (computed.backgroundColor && computed.backgroundColor.includes("oklch")) {
+        fixes.backgroundColor = element.style.backgroundColor;
+        element.style.backgroundColor = rgbFallback(computed.backgroundColor) || "#ffffff";
+      }
+      if (computed.color && computed.color.includes("oklch")) {
+        fixes.color = element.style.color;
+        element.style.color = rgbFallback(computed.color) || "#000000";
+      }
+      if (computed.borderColor && computed.borderColor.includes("oklch")) {
+        fixes.borderColor = element.style.borderColor;
+        element.style.borderColor = rgbFallback(computed.borderColor) || "#cccccc";
+      }
+      if (computed.boxShadow && computed.boxShadow.includes("oklch")) {
+        fixes.boxShadow = element.style.boxShadow;
+        element.style.boxShadow = "none";
+      }
+      if (computed.outlineColor && computed.outlineColor.includes("oklch")) {
+        fixes.outlineColor = element.style.outlineColor;
+        element.style.outlineColor = "transparent";
+      }
+
+      originalStyles.push({ element, fixes });
+    });
+
+    const elOriginalBg = el.style.backgroundColor;
+    const elComputed = window.getComputedStyle(el);
+    if (elComputed.backgroundColor && elComputed.backgroundColor.includes("oklch")) {
+      el.style.backgroundColor = "#ffffff";
+    }
+
+    let canvas;
+    try {
+      canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: "#ffffff",
+        allowTaint: true,
+        logging: false,
+      });
+    } finally {
+      buttons.forEach((btn) => (btn.style.visibility = "visible"));
+      originalStyles.forEach(({ element, fixes }) => {
+        if (fixes.backgroundColor !== undefined) element.style.backgroundColor = fixes.backgroundColor;
+        if (fixes.color !== undefined) element.style.color = fixes.color;
+        if (fixes.borderColor !== undefined) element.style.borderColor = fixes.borderColor;
+        if (fixes.boxShadow !== undefined) element.style.boxShadow = fixes.boxShadow;
+        if (fixes.outlineColor !== undefined) element.style.outlineColor = fixes.outlineColor;
+      });
+      el.style.backgroundColor = elOriginalBg;
+    }
+
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob((b) => {
+        if (b) resolve(b);
+        else reject(new Error("Blob creation failed"));
+      }, "image/png");
+    });
+
+    const fileName = `bazaar-${dateKey}.png`;
+    const file = new File([blob], fileName, { type: "image/png" });
+
+    // ✅ صرف تصویر شیئر
+    if (navigator.share && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({
+          files: [file],
+        });
+        return;
+      } catch (err) {
+        if (err.name === "AbortError") return;
+        console.warn("Native share failed:", err.message);
+      }
+    }
+
+    downloadBlob(blob, fileName);
+    Swal.fire({
+      icon: "success",
+      title: "تصویر ڈاؤن لوڈ ہو گئی",
+      text: "اسے WhatsApp میں کھول کر بھیجیں۔",
+      timer: 2000,
+      showConfirmButton: false,
+    });
+
+  } catch (err) {
+    console.error("Share error:", err);
+    Swal.fire({
+      icon: "error",
+      title: "خرابی پیش آئی",
+      html: `
+        <div style="text-align: right; direction: rtl;">
+          <p style="color: #e74c3c; font-weight: bold;">${err.message}</p>
+          <p style="color: #7f8c8d; font-size: 13px;">براہ مہربانی دوبارہ کوشش کریں۔</p>
+        </div>
+      `,
+      confirmButtonText: "ٹھیک ہے",
+      confirmButtonColor: "#7c3aed",
+    });
+  }
+};
+
+  // ========== SHARE TEXT ONLY ==========
+  const handleShareDateText = (dateKey) => {
+    const message = buildShareMessage(dateKey);
+    const waUrl = `https://wa.me/?text=${encodeURIComponent(message)}`;
+    window.open(waUrl, "_blank");
+  };
+
   // ========== TODO CARD ==========
   const TodoCard = ({ item }) => {
     const history = buildPriceHistory(todos);
     const key = item.todo.toLowerCase().trim();
     const itemHistory = history[key] || [];
-    // Previous entry = not current id
     const prevEntry = itemHistory.find((h) => h.id !== item.id);
 
     return (
@@ -323,7 +497,6 @@ function App() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            {/* Price change badge vs previous entry */}
             {prevEntry && prevEntry.estimatedRate !== item.estimatedRate && (
               <span
                 className={`text-xs px-2 py-1 rounded-full font-bold ${
@@ -354,7 +527,6 @@ function App() {
           </div>
         </div>
 
-        {/* Price info row */}
         <div className="flex justify-between text-sm mt-2 text-gray-700 flex-wrap gap-1">
           <p>
             فی عدد:{" "}
@@ -386,7 +558,6 @@ function App() {
           </p>
         </div>
 
-        {/* Previous price hint */}
         {prevEntry && (
           <div className="text-xs text-gray-400 mt-1">
             آخری قیمت ({formatDate(prevEntry.date)}): Rs.
@@ -432,10 +603,8 @@ function App() {
         {/* ==================== LIST VIEW ==================== */}
         {activeView === "list" && (
           <>
-            {/* Add Form */}
             <div className="addTodo my-5 grid grid-cols-2 gap-3 items-center bg-white p-4 rounded-xl shadow">
 
-              {/* Item name with autocomplete */}
               <h2 className="text-xl font-bold urdu">سامان</h2>
               <div className="relative w-full">
                 <input
@@ -444,12 +613,13 @@ function App() {
                   type="text"
                   placeholder="سامان کا نام لکھیں"
                   className="bg-gray-50 rounded-lg px-5 py-3 border w-full focus:outline-none focus:ring-1 focus:ring-violet-500"
-                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  onBlur={() =>
+                    setTimeout(() => setShowSuggestions(false), 150)
+                  }
                   onFocus={() => {
                     if (suggestions.length > 0) setShowSuggestions(true);
                   }}
                 />
-                {/* Suggestions Dropdown */}
                 {showSuggestions && suggestions.length > 0 && (
                   <div className="absolute z-50 w-full bg-white border border-violet-300 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
                     {suggestions.map((s) => {
@@ -465,7 +635,9 @@ function App() {
                           <div className="flex justify-between items-center">
                             <span
                               className={
-                                isUrduText(s) ? "urdu font-semibold" : "font-semibold"
+                                isUrduText(s)
+                                  ? "urdu font-semibold"
+                                  : "font-semibold"
                               }
                               dir={isUrduText(s) ? "rtl" : "ltr"}
                             >
@@ -473,7 +645,8 @@ function App() {
                             </span>
                             {latest && (
                               <span className="text-xs text-violet-600 bg-violet-100 px-2 py-1 rounded-full ml-2">
-                                آخری: Rs.{latest.estimatedRate} | {formatDate(latest.date)}
+                                آخری: Rs.{latest.estimatedRate} |{" "}
+                                {formatDate(latest.date)}
                               </span>
                             )}
                           </div>
@@ -484,7 +657,6 @@ function App() {
                 )}
               </div>
 
-              {/* Auto price filled notice */}
               {autoFilledPrice && (
                 <div className="col-span-2 text-center">
                   <span className="bg-green-100 text-green-700 px-4 py-1 rounded-full text-sm font-semibold">
@@ -499,7 +671,7 @@ function App() {
                 value={quantity}
                 type="number"
                 step="0.001"
-                placeholder="جیسے 1, 2, 0.250"
+                placeholder="جیسے کلو، گرام یا گنتی"
                 className="bg-gray-50 rounded-lg px-5 py-3 border w-full focus:outline-none focus:ring-1 focus:ring-violet-500"
               />
 
@@ -520,7 +692,8 @@ function App() {
                 <div className="col-span-2 text-center bg-violet-100 rounded-lg py-2 font-semibold text-violet-800">
                   اندازہ ٹوٹل:{" "}
                   <span className="text-xl">
-                    Rs.{calculateEstimatedAmount(quantity, estimated).toFixed()}
+                    Rs.
+                    {calculateEstimatedAmount(quantity, estimated).toFixed()}
                   </span>
                 </div>
               )}
@@ -543,16 +716,13 @@ function App() {
 
               <button
                 onClick={handleAdd}
-                disabled={
-                  todo.length < 1 || !estimated || !quantity || !date
-                }
+                disabled={!todo.trim() || !estimated || !quantity || !date}
                 className="bg-violet-500 hover:bg-violet-600 disabled:bg-violet-300 p-3 text-xl font-bold text-white rounded-md col-span-2 w-full urdu"
               >
                 ➕ شامل کریں
               </button>
             </div>
 
-            {/* Show Finished Toggle */}
             <div className="flex items-center gap-2 my-3">
               <input
                 onChange={toggledFinished}
@@ -565,7 +735,6 @@ function App() {
 
             <div className="h-[1px] opacity-25 w-full my-3 bg-black"></div>
 
-            {/* Grouped List */}
             {todos.length === 0 ? (
               <div className="text-center text-gray-500 urdu mt-10">
                 کوئی سامان نہیں
@@ -573,29 +742,56 @@ function App() {
             ) : (
               Object.keys(groupedTodos).map((dateKey) => {
                 const items = groupedTodos[dateKey];
+                const containerId = `date-${dateKey.replace(
+                  /[^a-zA-Z0-9]/g,
+                  "_"
+                )}`;
                 const visibleItems = showFinished
                   ? items
                   : items.filter((i) => !i.isCompleted);
                 if (visibleItems.length === 0) return null;
 
                 const dateEst = items.reduce(
-                  (acc, t) => acc + (t.estimatedAmount || 0), 0
+                  (acc, t) => acc + (t.estimatedAmount || 0),
+                  0
                 );
                 const dateReal = items.reduce(
-                  (acc, t) => acc + (t.realAmount || 0), 0
+                  (acc, t) => acc + (t.realAmount || 0),
+                  0
                 );
                 const dateDiff = items.reduce(
-                  (acc, t) => acc + (t.difference || 0), 0
+                  (acc, t) => acc + (t.difference || 0),
+                  0
                 );
 
                 return (
-                  <div key={dateKey} className="mb-6">
+                  <div key={dateKey} id={containerId} className="mb-6">
                     <div className="flex items-center justify-between bg-violet-600 text-white px-4 py-2 rounded-t-lg">
-                      <span className="font-bold text-lg">
-                        📅 {formatDate(dateKey)}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-lg">
+                          📅 {formatDate(dateKey)}
+                        </span>
+                        <div className="flex gap-1">
+                          {/* ✅ تصویر شیئر بٹن */}
+                          <button
+                            onClick={() => handleDownloadDateImage(dateKey)}
+                            className="text-sm bg-violet-800 hover:bg-violet-700 px-3 py-1 rounded-full transition-all"
+                            title="تصویر شیئر کریں"
+                          >
+                            🖼️
+                          </button>
+                          {/* ✅ ٹیکسٹ شیئر بٹن */}
+                          <button
+                            onClick={() => handleShareDateText(dateKey)}
+                            className="text-sm bg-violet-800 hover:bg-violet-700 px-3 py-1 rounded-full transition-all"
+                            title="ٹیکسٹ شیئر کریں"
+                          >
+                            💬
+                          </button>
+                        </div>
+                      </div>
                       <span className="text-sm bg-violet-800 px-3 py-1 rounded-full">
-                        {items.length} اشیاء
+                        {items.length} : ٹوٹل اشیاء
                       </span>
                     </div>
                     <div className="bg-violet-50 p-3 rounded-b-lg">
@@ -619,7 +815,6 @@ function App() {
               })
             )}
 
-            {/* Overall Total */}
             {todos.length > 0 && (
               <div className="bg-violet-700 text-white p-4 mt-4 rounded-lg shadow-lg">
                 <h2 className="text-xl font-bold mb-2 text-center urdu">
@@ -651,7 +846,6 @@ function App() {
               تاریخ وار رپورٹ
             </h2>
 
-            {/* Date selector */}
             <div className="bg-white p-4 rounded-xl shadow mb-4">
               <label className="block urdu font-bold mb-2 text-violet-700">
                 تاریخ منتخب کریں:
@@ -671,7 +865,6 @@ function App() {
               </select>
             </div>
 
-            {/* Date summary cards */}
             <div className="grid grid-cols-1 gap-3 mb-5">
               {allDates.map((d) => {
                 const dayTodos = todos.filter((t) => t.date === d);
@@ -684,7 +877,9 @@ function App() {
                 const dayDiff = dayTodos.reduce(
                   (acc, t) => acc + (t.difference || 0), 0
                 );
-                const completed = dayTodos.filter((t) => t.isCompleted).length;
+                const completed = dayTodos.filter(
+                  (t) => t.isCompleted
+                ).length;
 
                 return (
                   <div
@@ -732,7 +927,6 @@ function App() {
               })}
             </div>
 
-            {/* Selected date detail */}
             {selectedReportDate && selectedReportTodos.length > 0 && (
               <div className="bg-white rounded-xl shadow p-4">
                 <h3 className="text-lg font-bold urdu text-violet-700 mb-3 text-center">
@@ -746,9 +940,7 @@ function App() {
                     <div className="flex items-center gap-2">
                       <span
                         className={`${
-                          item.isCompleted
-                            ? "line-through text-gray-400"
-                            : ""
+                          item.isCompleted ? "line-through text-gray-400" : ""
                         } ${isUrduText(item.todo) ? "urdu" : ""}`}
                         dir={isUrduText(item.todo) ? "rtl" : "ltr"}
                       >
@@ -784,13 +976,15 @@ function App() {
                   </div>
                 ))}
 
-                {/* Date summary */}
                 <div className="mt-4 bg-violet-700 text-white rounded-lg p-3">
                   <div className="flex justify-between font-bold flex-wrap gap-2">
                     <span>
                       ٹوٹل اندازہ: Rs.
                       {selectedReportTodos
-                        .reduce((acc, t) => acc + (t.estimatedAmount || 0), 0)
+                        .reduce(
+                          (acc, t) => acc + (t.estimatedAmount || 0),
+                          0
+                        )
                         .toFixed()}
                     </span>
                     <span>
@@ -844,7 +1038,6 @@ function App() {
                     key={item.key}
                     className="bg-white rounded-xl shadow mb-4 overflow-hidden"
                   >
-                    {/* Item Header */}
                     <div
                       className="flex justify-between items-center p-4 cursor-pointer hover:bg-violet-50"
                       onClick={() =>
@@ -861,12 +1054,11 @@ function App() {
                           {item.name}
                         </span>
                         <span className="text-xs bg-violet-100 text-violet-600 px-2 py-1 rounded-full">
-                          {item.entries.length} مرتبہ خریدا
+                          {item.entries.length} : کتنی مرتبہ خریدا
                         </span>
                       </div>
 
                       <div className="flex items-center gap-2">
-                        {/* Overall price trend */}
                         {item.entries.length > 1 && (
                           <span
                             className={`text-xs font-bold px-2 py-1 rounded-full ${
@@ -890,7 +1082,6 @@ function App() {
                       </div>
                     </div>
 
-                    {/* Latest price bar */}
                     <div className="px-4 pb-3 flex gap-4 flex-wrap text-sm border-t bg-violet-50">
                       <span className="mt-2">
                         تازہ قیمت:{" "}
@@ -899,8 +1090,7 @@ function App() {
                         </strong>
                       </span>
                       <span className="mt-2">
-                        تاریخ:{" "}
-                        <strong>{formatDate(latest.date)}</strong>
+                        تاریخ: <strong>{formatDate(latest.date)}</strong>
                       </span>
                       {latest.realAmount && (
                         <span className="mt-2">
@@ -912,14 +1102,12 @@ function App() {
                       )}
                     </div>
 
-                    {/* Expanded: Full history table */}
                     {isOpen && (
                       <div className="p-4 border-t">
                         <h4 className="font-bold urdu mb-3 text-violet-700">
                           قیمت کی تاریخ:
                         </h4>
 
-                        {/* Price history timeline */}
                         <div className="overflow-x-auto">
                           <table className="w-full text-sm">
                             <thead>
@@ -928,8 +1116,12 @@ function App() {
                                   تاریخ
                                 </th>
                                 <th className="p-2 text-center">تعداد</th>
-                                <th className="p-2 text-center">فی عدد قیمت</th>
-                                <th className="p-2 text-center">اندازہ ٹوٹل</th>
+                                <th className="p-2 text-center">
+                                  فی عدد قیمت
+                                </th>
+                                <th className="p-2 text-center">
+                                  اندازہ ٹوٹل
+                                </th>
                                 <th className="p-2 text-center">اصل ٹوٹل</th>
                                 <th className="p-2 text-center rounded-tr-lg">
                                   تبدیلی
@@ -968,7 +1160,8 @@ function App() {
                                       Rs.{entry.estimatedRate}
                                     </td>
                                     <td className="p-2 text-center text-violet-700">
-                                      Rs.{entry.estimatedAmount?.toFixed() ?? "-"}
+                                      Rs.
+                                      {entry.estimatedAmount?.toFixed() ?? "-"}
                                     </td>
                                     <td className="p-2 text-center text-blue-600">
                                       {entry.realAmount
@@ -989,7 +1182,9 @@ function App() {
                                           {change > 0
                                             ? `▲ Rs.${change.toFixed()}`
                                             : change < 0
-                                            ? `▼ Rs.${Math.abs(change).toFixed()}`
+                                            ? `▼ Rs.${Math.abs(
+                                                change
+                                              ).toFixed()}`
                                             : "—"}
                                         </span>
                                       ) : (
@@ -1005,14 +1200,13 @@ function App() {
                           </table>
                         </div>
 
-                        {/* Visual price chart (bar) */}
                         {item.entries.length > 1 && (
                           <div className="mt-4">
                             <h4 className="font-bold urdu mb-2 text-violet-700">
                               قیمت کا گراف:
                             </h4>
                             <div className="flex items-end gap-2 h-24 bg-gray-50 p-2 rounded-lg">
-                              {[...item.entries].reverse().map((entry, idx) => {
+                              {[...item.entries].reverse().map((entry) => {
                                 const maxRate = Math.max(
                                   ...item.entries.map((e) => e.estimatedRate)
                                 );
@@ -1029,9 +1223,7 @@ function App() {
                                     <div
                                       className="w-full rounded-t-md bg-violet-500 transition-all"
                                       style={{ height: `${heightPct}%` }}
-                                      title={`Rs.${entry.estimatedRate} - ${formatDate(
-                                        entry.date
-                                      )}`}
+                                      title={`Rs.${entry.estimatedRate} - ${formatDate(entry.date)}`}
                                     />
                                     <span className="text-xs mt-1 text-gray-500 text-center">
                                       {formatDate(entry.date)
